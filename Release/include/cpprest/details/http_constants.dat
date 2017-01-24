@@ -9,6 +9,7 @@ DAT(TRCE,             _XPLATSTR("TRACE"))
 DAT(CONNECT,          _XPLATSTR("CONNECT"))
 DAT(MERGE,            _XPLATSTR("MERGE"))
 DAT(PATCH,            _XPLATSTR("PATCH"))
+DAT(REPORT,           _XPLATSTR("REPORT"))
 #endif
 
 #ifdef _PHRASES

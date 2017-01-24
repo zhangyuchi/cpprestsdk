@@ -34,6 +34,7 @@ else()
   set(Boost_USE_STATIC_LIBS OFF CACHE BOOL "Link against boost statically.")
 endif()
 
+#set (BOOST_ROOT "/home/zhangjun/Opensource/calandcard/client/cpprestsdk/Release/include/boost_1_63_0")
 include(cmake/cpprest_find_boost.cmake)
 include(cmake/cpprest_find_zlib.cmake)
 include(cmake/cpprest_find_openssl.cmake)
@@ -214,3 +215,5 @@ endif()
 if(BUILD_SAMPLES)
   add_subdirectory(samples)
 endif()
+
+add_subdirectory(baikal)
