@@ -12,6 +12,7 @@
 
 #include <cpprest/http_client.h>
 #include <cpprest/filestream.h>
+#include <memory>
 
 using namespace utility;
 using namespace web::http;
@@ -43,6 +44,131 @@ web::http::client::http_client_config client_config_for_proxy()
     return client_config;
 }
 
+void create(const string_t& inputFileName, const string_t& outputFileName){
+    std::unique_ptr<uint8_t[]> bodyBuf = nullptr;
+    utility::size64_t bodyLen=0;
+
+    auto inBuffer = std::make_shared<streambuf<uint8_t>>();
+    file_buffer<uint8_t>::open(inputFileName, std::ios::in)
+            .then([&](streambuf<uint8_t> inFile) -> pplx::task<size_t>
+                  {
+                      bodyBuf = std::make_unique<uint8_t[]>(inFile.size());
+                      return inFile.getn(bodyBuf.get(), inFile.size());
+                  })
+            .then([&](size_t len)
+                  {
+                      bodyLen = len;
+                      return;
+                  })
+            .wait();
+
+    printf("bodyBuf is %s\n", bodyBuf.get());
+
+#if 0
+    // Open a stream to the file to write the HTTP response body into.
+    auto fileBuffer = std::make_shared<streambuf<uint8_t>>();
+    file_buffer<uint8_t>::open(outputFileName, std::ios::out)
+            .then([&](streambuf<uint8_t> outFile) -> pplx::task<http_response>
+                  {
+                      *fileBuffer = outFile;
+
+                      // Create an HTTP request.
+                      // Encode the URI query since it could contain special characters like spaces.
+                      //http_client_config config;
+                      //credentials cred("username", "Password");
+                      //config.set_credentials(cred);
+                      http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+
+                      http_request req(methods::PUT);
+                      //autharg2:= base64("user:pass")
+                      req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+                      auto uri = uri_builder().append_path("/cal.php/calendars/zj/default/").append_path(inputFileName);
+                      req.set_request_uri(uri.to_uri());
+                      req.set_body(utf8string{(char*)bodyBuf, bodyLen}, utf8string("text/calendar; charset=utf-8"));
+
+                      /*
+                      http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+                      return client.request(methods::GET, uri_builder(U("/cal.php/calendars/zj/default/")).append_query(U("q"), searchTerm).to_string());
+                      */
+                      return client.request(req);
+                  })
+                    // Write the response body into the file buffer.
+            .then([=](http_response response) -> pplx::task<size_t>
+                  {
+                      printf("Response status code %u returned.\n", response.status_code());
+
+                      return response.body().read_to_end(*fileBuffer);
+                  })
+
+                    // Close the file buffer.
+            .then([=](size_t)
+                  {
+                      return fileBuffer->close();
+                  })
+
+                    // Wait for the entire response body to be written into the file.
+            .wait();
+
+#endif
+}
+
+void get(const string_t& inputFileName, const string_t& outputFileName){
+    uint8_t bodyBuf[1024];
+    size_t bodyLen=0;
+
+    auto inBuffer = std::make_shared<streambuf<uint8_t>>();
+    file_buffer<uint8_t>::open(inputFileName, std::ios::in).then([&](streambuf<uint8_t> inFile) {
+        inFile.scopy(const_cast<uint8_t *>(bodyBuf), inFile.size());
+        bodyLen = inFile.size();
+        printf("file content:\n%ld\n", bodyLen);
+    }).wait();
+
+    // Open a stream to the file to write the HTTP response body into.
+    auto fileBuffer = std::make_shared<streambuf<uint8_t>>();
+    file_buffer<uint8_t>::open(outputFileName, std::ios::out)
+            .then([=](streambuf<uint8_t> outFile) -> pplx::task<http_response>
+                  {
+                      *fileBuffer = outFile;
+
+                      // Create an HTTP request.
+                      // Encode the URI query since it could contain special characters like spaces.
+                      //http_client_config config;
+                      //credentials cred("username", "Password");
+                      //config.set_credentials(cred);
+                      http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+
+                      http_request req(methods::REPORT);
+                      //autharg2:= base64("user:pass")
+                      req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+                      req.headers().add("DEPTH", "1");
+
+                      auto uri = uri_builder().append_path("/cal.php/calendars/zj/default/");
+                      req.set_request_uri(uri.to_uri());
+                      req.set_body(utf8string{(char *)bodyBuf, bodyLen}, utf8string("text/xml; charset=utf-8"));
+
+                      /*
+                      http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+                      return client.request(methods::GET, uri_builder(U("/cal.php/calendars/zj/default/")).append_query(U("q"), searchTerm).to_string());
+                      */
+                      return client.request(req);
+                  })
+                    // Write the response body into the file buffer.
+            .then([=](http_response response) -> pplx::task<size_t>
+                  {
+                      printf("Response status code %u returned.\n", response.status_code());
+
+                      return response.body().read_to_end(*fileBuffer);
+                  })
+
+                    // Close the file buffer.
+            .then([=](size_t)
+                  {
+                      return fileBuffer->close();
+                  })
+
+                    // Wait for the entire response body to be written into the file.
+            .wait();
+}
 
 #ifdef _WIN32
 int wmain(int argc, wchar_t *args[])
@@ -50,61 +176,26 @@ int wmain(int argc, wchar_t *args[])
 int main(int argc, char *args[])
 #endif
 {
-    if(argc != 3)
+    if(argc != 4)
     {
-        printf("Usage: BingRequest.exe search_term output_file\n");
+        printf("Usage: BingRequest.exe type search_term output_file\n");
         return -1;
     }
-    const string_t inputFileName = args[1];
-    const string_t outputFileName = args[2];
 
-    auto inBuffer = std::make_shared<streambuf<uint8_t>>();
-    file_buffer<uint8_t>::open(inputFileName, std::ios::in).then([=](streambuf<uint8_t> inFile) {
-        inFile.can_read()
-    }).wait();
+    const int type = atoi(args[1]);
+    const string_t inputFileName = args[2];
+    const string_t outputFileName = args[3];
 
-    // Open a stream to the file to write the HTTP response body into.
-    auto fileBuffer = std::make_shared<streambuf<uint8_t>>();
-    file_buffer<uint8_t>::open(outputFileName, std::ios::out).then([=](streambuf<uint8_t> outFile) -> pplx::task<http_response>
-    {
-        *fileBuffer = outFile; 
-
-        // Create an HTTP request.
-        // Encode the URI query since it could contain special characters like spaces.
-        //http_client_config config;
-        //credentials cred("username", "Password");
-        //config.set_credentials(cred);
-        http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
-
-        http_request req(methods::REPORT);
-        //autharg2:= base64("user:pass")
-        req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
-        req.set_request_uri(U("/cal.php/calendars/zj/default/"));
-        req.set
-
-        /*
-        http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
-        return client.request(methods::GET, uri_builder(U("/cal.php/calendars/zj/default/")).append_query(U("q"), searchTerm).to_string());
-        */
-        return client.request(req);
-    })
-
-    // Write the response body into the file buffer.
-    .then([=](http_response response) -> pplx::task<size_t>
-    {
-        printf("Response status code %u returned.\n", response.status_code());
-
-        return response.body().read_to_end(*fileBuffer);
-    })
-
-    // Close the file buffer.
-    .then([=](size_t)
-    {
-        return fileBuffer->close();
-    })
-
-    // Wait for the entire response body to be written into the file.
-    .wait();
+    switch (type) {
+        case 1:
+            create(inputFileName,outputFileName);
+            break;
+        case 2:
+            get(inputFileName, outputFileName);
+            break;
+        default:
+            printf("invalid type: %d\n", type);
+    }
 
     return 0;
 }

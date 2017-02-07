@@ -10,6 +10,7 @@ DAT(CONNECT,          _XPLATSTR("CONNECT"))
 DAT(MERGE,            _XPLATSTR("MERGE"))
 DAT(PATCH,            _XPLATSTR("PATCH"))
 DAT(REPORT,           _XPLATSTR("REPORT"))
+DAT(PROPFIND,         _XPLATSTR("PROPFIND"))
 #endif
 
 #ifdef _PHRASES

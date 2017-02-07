@@ -1,4 +1,5 @@
 if (NOT WINDOWS_STORE AND NOT WINDOWS_PHONE)
   add_executable(caldav caldavclient.cpp)
+  set_property(TARGET caldav PROPERTY CXX_STANDARD 14)
   target_link_libraries(caldav cpprest)
 endif()
