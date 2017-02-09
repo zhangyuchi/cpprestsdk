@@ -107,6 +107,9 @@
 // json
 #include "cpprest/json.h"
 
+// xml
+#include "cpprest/tinyxml2.h"
+
 // uri
 #include "cpprest/base_uri.h"
 #include "cpprest/details/uri_parser.h"

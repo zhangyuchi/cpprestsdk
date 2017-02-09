@@ -27,6 +27,7 @@ set(SOURCES
   json/json.cpp
   json/json_parsing.cpp
   json/json_serialization.cpp
+  xml/tinyxml2.cpp
   pplx/pplx.cpp
   uri/uri.cpp
   uri/uri_builder.cpp

@@ -12,7 +12,7 @@
 
 #include <cpprest/http_client.h>
 #include <cpprest/filestream.h>
-#include <memory>
+#include <stdlib.h>
 
 using namespace utility;
 using namespace web::http;
@@ -64,7 +64,7 @@ void create(const string_t& inputFileName, const string_t& outputFileName){
 
     printf("bodyBuf is %s\n", bodyBuf.get());
 
-#if 0
+#if 1
     // Open a stream to the file to write the HTTP response body into.
     auto fileBuffer = std::make_shared<streambuf<uint8_t>>();
     file_buffer<uint8_t>::open(outputFileName, std::ios::out)
@@ -84,7 +84,7 @@ void create(const string_t& inputFileName, const string_t& outputFileName){
                       req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
                       auto uri = uri_builder().append_path("/cal.php/calendars/zj/default/").append_path(inputFileName);
                       req.set_request_uri(uri.to_uri());
-                      req.set_body(utf8string{(char*)bodyBuf, bodyLen}, utf8string("text/calendar; charset=utf-8"));
+                      req.set_body(utf8string{(char*)bodyBuf.get(), bodyLen}, utf8string("text/calendar; charset=utf-8"));
 
                       /*
                       http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
@@ -113,20 +113,29 @@ void create(const string_t& inputFileName, const string_t& outputFileName){
 }
 
 void get(const string_t& inputFileName, const string_t& outputFileName){
-    uint8_t bodyBuf[1024];
-    size_t bodyLen=0;
+    std::unique_ptr<uint8_t[]> bodyBuf = nullptr;
+    utility::size64_t bodyLen=0;
 
     auto inBuffer = std::make_shared<streambuf<uint8_t>>();
-    file_buffer<uint8_t>::open(inputFileName, std::ios::in).then([&](streambuf<uint8_t> inFile) {
-        inFile.scopy(const_cast<uint8_t *>(bodyBuf), inFile.size());
-        bodyLen = inFile.size();
-        printf("file content:\n%ld\n", bodyLen);
-    }).wait();
+    file_buffer<uint8_t>::open(inputFileName, std::ios::in)
+            .then([&](streambuf<uint8_t> inFile) -> pplx::task<size_t>
+                  {
+                      bodyBuf = std::make_unique<uint8_t[]>(inFile.size());
+                      return inFile.getn(bodyBuf.get(), inFile.size());
+                  })
+            .then([&](size_t len)
+                  {
+                      bodyLen = len;
+                      return;
+                  })
+            .wait();
+
+    printf("bodyBuf is %s\n", bodyBuf.get());
 
     // Open a stream to the file to write the HTTP response body into.
     auto fileBuffer = std::make_shared<streambuf<uint8_t>>();
     file_buffer<uint8_t>::open(outputFileName, std::ios::out)
-            .then([=](streambuf<uint8_t> outFile) -> pplx::task<http_response>
+            .then([&](streambuf<uint8_t> outFile) -> pplx::task<http_response>
                   {
                       *fileBuffer = outFile;
 
@@ -144,7 +153,7 @@ void get(const string_t& inputFileName, const string_t& outputFileName){
 
                       auto uri = uri_builder().append_path("/cal.php/calendars/zj/default/");
                       req.set_request_uri(uri.to_uri());
-                      req.set_body(utf8string{(char *)bodyBuf, bodyLen}, utf8string("text/xml; charset=utf-8"));
+                      req.set_body(utf8string{(char *)bodyBuf.get(), bodyLen}, utf8string("text/xml; charset=utf-8"));
 
                       /*
                       http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
@@ -166,6 +175,127 @@ void get(const string_t& inputFileName, const string_t& outputFileName){
                       return fileBuffer->close();
                   })
 
+                    // Wait for the entire response body to be written into the file.
+            .wait();
+}
+
+void getall(const string_t& outputFileName){
+
+    string_t bodyBuf = "<c:calendar-query xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\">\n"
+            "    <d:prop>\n"
+            "        <d:getetag />\n"
+            "        <c:calendar-data />\n"
+            "    </d:prop>\n"
+            "    <c:filter>\n"
+            "        <c:comp-filter name=\"VCALENDAR\" />\n"
+            "    </c:filter>\n"
+            "</c:calendar-query>";
+
+
+    // Open a stream to the file to write the HTTP response body into.
+    auto fileBuffer = std::make_shared<streambuf<uint8_t>>();
+    file_buffer<uint8_t>::open(outputFileName, std::ios::out)
+            .then([&](streambuf<uint8_t> outFile) -> pplx::task<http_response>
+                  {
+                      *fileBuffer = outFile;
+
+                      // Create an HTTP request.
+                      // Encode the URI query since it could contain special characters like spaces.
+                      //http_client_config config;
+                      //credentials cred("username", "Password");
+                      //config.set_credentials(cred);
+                      http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+
+                      http_request req(methods::REPORT);
+                      //autharg2:= base64("user:pass")
+                      req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+                      req.headers().add("DEPTH", "1");
+
+                      auto uri = uri_builder().append_path("/cal.php/calendars/zj/default/");
+                      req.set_request_uri(uri.to_uri());
+                      req.set_body(bodyBuf, utf8string("text/xml; charset=utf-8"));
+
+                      /*
+                      http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+                      return client.request(methods::GET, uri_builder(U("/cal.php/calendars/zj/default/")).append_query(U("q"), searchTerm).to_string());
+                      */
+                      return client.request(req);
+                  })
+                    // Write the response body into the file buffer.
+            .then([=](http_response response) -> pplx::task<size_t>
+                  {
+                      printf("Response status code %u returned.\n", response.status_code());
+
+                      return response.body().read_to_end(*fileBuffer);
+                  })
+
+                    // Close the file buffer.
+            .then([=](size_t)
+                  {
+                      return fileBuffer->close();
+                  })
+
+                    // Wait for the entire response body to be written into the file.
+            .wait();
+}
+
+void propfind(string_t& displayName, string_t& syncToken){
+
+    string_t bodyBuf = "<d:propfind xmlns:d=\"DAV:\" xmlns:cs=\"http://calendarserver.org/ns/\">\n"
+            "  <d:prop>\n"
+            "     <d:displayname />\n"
+            "     <cs:getctag />\n"
+            "     <d:sync-token />\n"
+            "  </d:prop>\n"
+            "</d:propfind>";
+    // Create an HTTP request.
+    // Encode the URI query since it could contain special characters like spaces.
+    //http_client_config config;
+    //credentials cred("username", "Password");
+    //config.set_credentials(cred);
+    http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+
+    http_request req(methods::PROPFIND);
+    //autharg2:= base64("user:pass")
+    req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+    req.headers().add("DEPTH", "0");
+
+    auto uri = uri_builder().append_path("/cal.php/calendars/zj/default/");
+    req.set_request_uri(uri.to_uri());
+    req.set_body(bodyBuf, utf8string("text/xml; charset=utf-8"));
+
+    /*
+    http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+    return client.request(methods::GET, uri_builder(U("/cal.php/calendars/zj/default/")).append_query(U("q"), searchTerm).to_string());
+    */
+
+    auto outbuf = container_buffer<std::vector<uint8_t>>(std::ios_base::out);
+    std::unique_ptr<uint8_t[]> respBuf = nullptr;
+
+    client.request(req)
+            .then([&outbuf](http_response response) -> pplx::task<size_t>
+                  {
+                      printf("Response status code %u returned.\n", response.status_code());
+                      return response.body().read_to_end(outbuf);
+                  })
+            .then([&outbuf,&respBuf](size_t respLen)
+                  {
+                   /*
+                      size_t acquired_size = 0;
+                      uint8_t* ptr;
+                      bool acquired = cb.acquire(ptr, acquired_size);//may dont copy
+                    */
+                      respBuf = std::make_unique<uint8_t[]>(respLen);
+                      long newpos = outbuf.seekpos(1, std::ios_base::in);//if canread is false ,seek will fail
+                      printf("resplen:%ld, cblen:%ld, newpos:%ld, canread:%d\n",
+                             respLen, outbuf.size(), newpos, outbuf.can_read());
+
+                      auto& cbvec = outbuf.collection();
+                      printf("resplen:%ld, cap:%ld\n", cbvec.size(), cbvec.capacity());
+                      string_t bodyStr{(char *)&cbvec[0], cbvec.size()};
+                      printf("resp:\n%s\n", bodyStr.c_str());
+                      return outbuf.close();
+                  })
                     // Wait for the entire response body to be written into the file.
             .wait();
 }
@@ -192,6 +322,14 @@ int main(int argc, char *args[])
             break;
         case 2:
             get(inputFileName, outputFileName);
+            break;
+        case 3:
+            getall(outputFileName);
+            break;
+        case 4: {
+                string_t displayName,syncToken;
+                propfind(displayName, syncToken);
+            }
             break;
         default:
             printf("invalid type: %d\n", type);
