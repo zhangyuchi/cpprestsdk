@@ -12,12 +12,17 @@
 
 #include <cpprest/http_client.h>
 #include <cpprest/filestream.h>
-#include <stdlib.h>
+#include <cpprest/tinyxml2.h>
+#include <cpprest/webdav.h>
 
 using namespace utility;
 using namespace web::http;
 using namespace web::http::client;
 using namespace concurrency::streams;
+using namespace web::tinyxml2;
+using namespace web::caldav;
+
+static const char* getXmlElem(const XMLDocument& doc, std::vector<string_t>&& path);
 
 /* Can pass proxy information via environment variable http_proxy.
    Example:
@@ -179,7 +184,7 @@ void get(const string_t& inputFileName, const string_t& outputFileName){
             .wait();
 }
 
-void getall(const string_t& outputFileName){
+void getall(std::vector<Calendra>& cals){
 
     string_t bodyBuf = "<c:calendar-query xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\">\n"
             "    <d:prop>\n"
@@ -191,50 +196,66 @@ void getall(const string_t& outputFileName){
             "    </c:filter>\n"
             "</c:calendar-query>";
 
+    // Create an HTTP request.
+    // Encode the URI query since it could contain special characters like spaces.
+    //http_client_config config;
+    //credentials cred("username", "Password");
+    //config.set_credentials(cred);
+    http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
 
-    // Open a stream to the file to write the HTTP response body into.
-    auto fileBuffer = std::make_shared<streambuf<uint8_t>>();
-    file_buffer<uint8_t>::open(outputFileName, std::ios::out)
-            .then([&](streambuf<uint8_t> outFile) -> pplx::task<http_response>
-                  {
-                      *fileBuffer = outFile;
+    http_request req(methods::REPORT);
+    //autharg2:= base64("user:pass")
+    req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+    req.headers().add("DEPTH", "1");
 
-                      // Create an HTTP request.
-                      // Encode the URI query since it could contain special characters like spaces.
-                      //http_client_config config;
-                      //credentials cred("username", "Password");
-                      //config.set_credentials(cred);
-                      http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+    auto uri = uri_builder().append_path("/cal.php/calendars/zj/default/");
+    req.set_request_uri(uri.to_uri());
+    req.set_body(bodyBuf, utf8string("text/xml; charset=utf-8"));
 
-                      http_request req(methods::REPORT);
-                      //autharg2:= base64("user:pass")
-                      req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
-                      req.headers().add("DEPTH", "1");
+    /*
+    http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+    return client.request(methods::GET, uri_builder(U("/cal.php/calendars/zj/default/")).append_query(U("q"), searchTerm).to_string());
+    */
 
-                      auto uri = uri_builder().append_path("/cal.php/calendars/zj/default/");
-                      req.set_request_uri(uri.to_uri());
-                      req.set_body(bodyBuf, utf8string("text/xml; charset=utf-8"));
+    auto outbuf = container_buffer<std::vector<uint8_t>>(std::ios_base::out);
+    std::unique_ptr<uint8_t[]> respBuf = nullptr;
 
-                      /*
-                      http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
-                      return client.request(methods::GET, uri_builder(U("/cal.php/calendars/zj/default/")).append_query(U("q"), searchTerm).to_string());
-                      */
-                      return client.request(req);
-                  })
-                    // Write the response body into the file buffer.
-            .then([=](http_response response) -> pplx::task<size_t>
+    client.request(req)
+            .then([&outbuf](http_response response) -> pplx::task<size_t>
                   {
                       printf("Response status code %u returned.\n", response.status_code());
-
-                      return response.body().read_to_end(*fileBuffer);
+                      return response.body().read_to_end(outbuf);
                   })
-
-                    // Close the file buffer.
-            .then([=](size_t)
+            .then([&outbuf,&respBuf,&cals](size_t respLen)
                   {
-                      return fileBuffer->close();
-                  })
+                      /*
+                         size_t acquired_size = 0;
+                         uint8_t* ptr;
+                         bool acquired = cb.acquire(ptr, acquired_size);//may dont copy
+                       */
+                      respBuf = std::make_unique<uint8_t[]>(respLen);
+                      long newpos = outbuf.seekpos(1, std::ios_base::in);//if canread is false ,seek will fail
+                      printf("resplen:%ld, cblen:%ld, newpos:%ld, canread:%d\n",
+                             respLen, outbuf.size(), newpos, outbuf.can_read());
 
+                      auto& cbvec = outbuf.collection();
+                      printf("resplen:%ld, cap:%ld\n", cbvec.size(), cbvec.capacity());
+                      string_t bodyStr{(char *)&cbvec[0], cbvec.size()};
+                      printf("resp:\n%s\n", bodyStr.c_str());
+
+                      //parse xml
+                      XMLDocument doc;
+                      doc.Parse((char *)&cbvec[0], cbvec.size());
+                      const char* etag = getXmlElem(doc, std::vector<string_t>{"d:multistatus", "d:response", "d:propstat", "d:prop", "d:getetag"});
+                      printf( "displayname is: %s\n", etag );
+                      Calendra cal;
+                      cal.etag.assign(etag);
+                      const char *caldata = getXmlElem(doc, std::vector<string_t>{"d:multistatus", "d:response", "d:propstat", "d:prop", "cal:calendar-data"});
+                      printf( "getctag is: %s\n", caldata );
+                      cal.data.assign(caldata);
+
+                      return outbuf.close();
+                  })
                     // Wait for the entire response body to be written into the file.
             .wait();
 }
@@ -278,7 +299,7 @@ void propfind(string_t& displayName, string_t& syncToken){
                       printf("Response status code %u returned.\n", response.status_code());
                       return response.body().read_to_end(outbuf);
                   })
-            .then([&outbuf,&respBuf](size_t respLen)
+            .then([&outbuf,&respBuf,&displayName,&syncToken](size_t respLen)
                   {
                    /*
                       size_t acquired_size = 0;
@@ -294,10 +315,40 @@ void propfind(string_t& displayName, string_t& syncToken){
                       printf("resplen:%ld, cap:%ld\n", cbvec.size(), cbvec.capacity());
                       string_t bodyStr{(char *)&cbvec[0], cbvec.size()};
                       printf("resp:\n%s\n", bodyStr.c_str());
+
+                      //parse xml
+                      XMLDocument doc;
+                      doc.Parse((char *)&cbvec[0], cbvec.size());
+                      const char* text = getXmlElem(doc, std::vector<string_t>{"d:multistatus", "d:response", "d:propstat", "d:prop", "d:displayname"});
+                      printf( "displayname is: %s\n", text );
+                      displayName.assign(text);
+                      text = getXmlElem(doc, std::vector<string_t>{"d:multistatus", "d:response", "d:propstat", "d:prop", "cs:getctag"});
+                      printf( "getctag is: %s\n", text );
+                      syncToken.assign(text);
+                      text = getXmlElem(doc, std::vector<string_t>{"d:multistatus", "d:response", "d:propstat", "d:prop", "d:sync-token"});
+                      printf( "sync-token is: %s\n", text );
+
                       return outbuf.close();
                   })
                     // Wait for the entire response body to be written into the file.
             .wait();
+}
+
+const char* getXmlElem(const XMLDocument& doc, std::vector<string_t>&& path){
+    const char *text = nullptr;
+
+    size_t num = path.size();
+    if (num>0){
+        const XMLElement* element = doc.FirstChildElement(path[0].c_str());
+        for (auto i=1; i<path.size() && element; ++i){
+            element = element->FirstChildElement(path[i].c_str());
+        }
+
+        if ( element )
+            text = element->GetText();
+    }
+
+    return text;
 }
 
 #ifdef _WIN32
@@ -323,8 +374,10 @@ int main(int argc, char *args[])
         case 2:
             get(inputFileName, outputFileName);
             break;
-        case 3:
-            getall(outputFileName);
+        case 3: {
+                std::vector<Calendra> cals;
+                getall(cals);
+            }
             break;
         case 4: {
                 string_t displayName,syncToken;
