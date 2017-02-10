@@ -22,7 +22,55 @@ using namespace concurrency::streams;
 using namespace web::tinyxml2;
 using namespace web::caldav;
 
-static const char* getXmlElem(const XMLDocument& doc, std::vector<string_t>&& path);
+const char* getXmlElem(const XMLElement* element, std::vector<string_t>&& path){
+    const char *text = nullptr;
+
+    size_t num = path.size();
+    if (num>0){
+        for (auto i=0; i<path.size() && element; ++i){
+            element = element->FirstChildElement(path[i].c_str());
+        }
+
+        if ( element )
+            text = element->GetText();
+    }
+
+    return text;
+}
+
+const XMLElement* getXmlResp(const XMLDocument& doc){
+
+    const XMLElement* elem = nullptr;
+    elem = doc.FirstChildElement("d:multistatus");
+    if (elem){
+        elem = elem->FirstChildElement("d:response");
+    }
+
+    return elem;
+}
+
+string_t loadFile(const char* fn){
+    std::unique_ptr<uint8_t[]> bodyBuf = nullptr;
+    string_t fcontent;
+
+    auto inBuffer = std::make_shared<streambuf<uint8_t>>();
+    file_buffer<uint8_t>::open(fn, std::ios::in)
+            .then([&](streambuf<uint8_t> inFile) -> pplx::task<size_t>
+                  {
+                      bodyBuf = std::make_unique<uint8_t[]>(inFile.size());
+                      return inFile.getn(bodyBuf.get(), inFile.size());
+                  })
+            .then([&](size_t len)
+                  {
+                      fcontent.assign((char *)bodyBuf.get(), len);
+                      return;
+                  })
+            .wait();
+
+    printf("file content is %s\n", fcontent.c_str());
+
+    return fcontent;
+}
 
 /* Can pass proxy information via environment variable http_proxy.
    Example:
@@ -49,137 +97,144 @@ web::http::client::http_client_config client_config_for_proxy()
     return client_config;
 }
 
-void create(const string_t& inputFileName, const string_t& outputFileName){
-    std::unique_ptr<uint8_t[]> bodyBuf = nullptr;
-    utility::size64_t bodyLen=0;
+int create(const Calendra& cal, string_t& etag){
+    int ret=0;
+    // Create an HTTP request.
+    // Encode the URI query since it could contain special characters like spaces.
+    //http_client_config config;
+    //credentials cred("username", "Password");
+    //config.set_credentials(cred);
+    http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
 
-    auto inBuffer = std::make_shared<streambuf<uint8_t>>();
-    file_buffer<uint8_t>::open(inputFileName, std::ios::in)
-            .then([&](streambuf<uint8_t> inFile) -> pplx::task<size_t>
-                  {
-                      bodyBuf = std::make_unique<uint8_t[]>(inFile.size());
-                      return inFile.getn(bodyBuf.get(), inFile.size());
-                  })
-            .then([&](size_t len)
-                  {
-                      bodyLen = len;
-                      return;
-                  })
-            .wait();
+    http_request req(methods::PUT);
+    //autharg2:= base64("user:pass")
+    req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+    auto uri = uri_builder().append_path(cal.uri);
+    req.set_request_uri(uri.to_uri());
+    req.set_body(cal.data, utf8string("text/calendar; charset=utf-8"));
 
-    printf("bodyBuf is %s\n", bodyBuf.get());
+    /*
+    http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+    return client.request(methods::GET, uri_builder(U("/cal.php/calendars/zj/default/")).append_query(U("q"), searchTerm).to_string());
+    */
 
-#if 1
-    // Open a stream to the file to write the HTTP response body into.
-    auto fileBuffer = std::make_shared<streambuf<uint8_t>>();
-    file_buffer<uint8_t>::open(outputFileName, std::ios::out)
-            .then([&](streambuf<uint8_t> outFile) -> pplx::task<http_response>
-                  {
-                      *fileBuffer = outFile;
+    auto outbuf = container_buffer<std::vector<uint8_t>>(std::ios_base::out);
 
-                      // Create an HTTP request.
-                      // Encode the URI query since it could contain special characters like spaces.
-                      //http_client_config config;
-                      //credentials cred("username", "Password");
-                      //config.set_credentials(cred);
-                      http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
-
-                      http_request req(methods::PUT);
-                      //autharg2:= base64("user:pass")
-                      req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
-                      auto uri = uri_builder().append_path("/cal.php/calendars/zj/default/").append_path(inputFileName);
-                      req.set_request_uri(uri.to_uri());
-                      req.set_body(utf8string{(char*)bodyBuf.get(), bodyLen}, utf8string("text/calendar; charset=utf-8"));
-
-                      /*
-                      http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
-                      return client.request(methods::GET, uri_builder(U("/cal.php/calendars/zj/default/")).append_query(U("q"), searchTerm).to_string());
-                      */
-                      return client.request(req);
-                  })
-                    // Write the response body into the file buffer.
-            .then([=](http_response response) -> pplx::task<size_t>
+    client.request(req)
+            .then([&outbuf, &etag, &ret](http_response response) -> pplx::task<size_t>
                   {
                       printf("Response status code %u returned.\n", response.status_code());
+                      if ( response.status_code() == 201 || response.status_code() == 204 ){
+                          etag = response.headers()["ETag"];
+                      }else{
+                          ret = response.status_code();
+                      }
 
-                      return response.body().read_to_end(*fileBuffer);
+                      return response.body().read_to_end(outbuf);
                   })
-
-                    // Close the file buffer.
-            .then([=](size_t)
+                  // Close the file buffer.
+            .then([&outbuf](size_t)
                   {
-                      return fileBuffer->close();
+                      return outbuf.close();
                   })
 
                     // Wait for the entire response body to be written into the file.
             .wait();
 
-#endif
+    return ret;
 }
 
-void get(const string_t& inputFileName, const string_t& outputFileName){
-    std::unique_ptr<uint8_t[]> bodyBuf = nullptr;
-    utility::size64_t bodyLen=0;
+void gets(const std::vector<string_t>& uris, std::vector<Calendra>& cals){
 
-    auto inBuffer = std::make_shared<streambuf<uint8_t>>();
-    file_buffer<uint8_t>::open(inputFileName, std::ios::in)
-            .then([&](streambuf<uint8_t> inFile) -> pplx::task<size_t>
-                  {
-                      bodyBuf = std::make_unique<uint8_t[]>(inFile.size());
-                      return inFile.getn(bodyBuf.get(), inFile.size());
-                  })
-            .then([&](size_t len)
-                  {
-                      bodyLen = len;
-                      return;
-                  })
-            .wait();
+    string_t origxml = "<c:calendar-multiget xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\">\n"
+            "    <d:prop>\n"
+            "        <d:getetag />\n"
+            "        <c:calendar-data />\n"
+            "    </d:prop>\n"
+            "    <c:filter>\n"
+            "        <c:comp-filter name=\"VCALENDAR\" />\n"
+            "    </c:filter>\n"
+            "</c:calendar-multiget>";
 
-    printf("bodyBuf is %s\n", bodyBuf.get());
+    //parse xml
+    XMLDocument reqxml;
+    reqxml.Parse(origxml.data(), origxml.size());
+    XMLElement* root = reqxml.FirstChildElement();
+    if (root){
+        for (auto& uri: uris) {
 
-    // Open a stream to the file to write the HTTP response body into.
-    auto fileBuffer = std::make_shared<streambuf<uint8_t>>();
-    file_buffer<uint8_t>::open(outputFileName, std::ios::out)
-            .then([&](streambuf<uint8_t> outFile) -> pplx::task<http_response>
-                  {
-                      *fileBuffer = outFile;
+            XMLElement* pHref = reqxml.NewElement("d:href");
+            pHref->SetText(uri.c_str());
+            root->InsertFirstChild(pHref);
+        }
+    }
 
-                      // Create an HTTP request.
-                      // Encode the URI query since it could contain special characters like spaces.
-                      //http_client_config config;
-                      //credentials cred("username", "Password");
-                      //config.set_credentials(cred);
-                      http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+    XMLPrinter printer;
+    reqxml.Print( &printer );
+    //printf("reqxml:%s\n", printer.CStr());
 
-                      http_request req(methods::REPORT);
-                      //autharg2:= base64("user:pass")
-                      req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
-                      req.headers().add("DEPTH", "1");
+    // Create an HTTP request.
+    // Encode the URI query since it could contain special characters like spaces.
+    //http_client_config config;
+    //credentials cred("username", "Password");
+    //config.set_credentials(cred);
+    http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
 
-                      auto uri = uri_builder().append_path("/cal.php/calendars/zj/default/");
-                      req.set_request_uri(uri.to_uri());
-                      req.set_body(utf8string{(char *)bodyBuf.get(), bodyLen}, utf8string("text/xml; charset=utf-8"));
+    http_request req(methods::REPORT);
+    //autharg2:= base64("user:pass")
+    req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+    req.headers().add("DEPTH", "1");
 
-                      /*
-                      http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
-                      return client.request(methods::GET, uri_builder(U("/cal.php/calendars/zj/default/")).append_query(U("q"), searchTerm).to_string());
-                      */
-                      return client.request(req);
-                  })
-                    // Write the response body into the file buffer.
-            .then([=](http_response response) -> pplx::task<size_t>
+    auto uri = uri_builder().append_path("/cal.php/calendars/zj/default/");
+    req.set_request_uri(uri.to_uri());
+    req.set_body(printer.CStr(), utf8string("text/xml; charset=utf-8"));
+
+    /*
+    http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+    return client.request(methods::GET, uri_builder(U("/cal.php/calendars/zj/default/")).append_query(U("q"), searchTerm).to_string());
+    */
+
+    auto outbuf = container_buffer<std::vector<uint8_t>>(std::ios_base::out);
+
+    client.request(req)
+            .then([&outbuf](http_response response) -> pplx::task<size_t>
                   {
                       printf("Response status code %u returned.\n", response.status_code());
-
-                      return response.body().read_to_end(*fileBuffer);
+                      return response.body().read_to_end(outbuf);
                   })
-
-                    // Close the file buffer.
-            .then([=](size_t)
+            .then([&outbuf,&cals](size_t respLen)
                   {
-                      return fileBuffer->close();
-                  })
+                      /*
+                         size_t acquired_size = 0;
+                         uint8_t* ptr;
+                         bool acquired = cb.acquire(ptr, acquired_size);//may dont copy
+                       */
+                      printf("resplen:%ld, cblen:%ld, canread:%d\n",
+                             respLen, outbuf.size(), outbuf.can_read());
 
+                      auto& cbvec = outbuf.collection();
+                      //parse xml
+                      XMLDocument doc;
+                      doc.Parse((char *)&cbvec[0], cbvec.size());
+                      const XMLElement* response = getXmlResp(doc);
+                      while(response) {
+                          Calendra cal{};
+                          const char *etag = getXmlElem(response, std::vector<string_t>{"d:propstat", "d:prop", "d:getetag"});
+                          const char *caldata = getXmlElem(response, std::vector<string_t>{"d:propstat", "d:prop", "cal:calendar-data"});
+                          const char *caluri = getXmlElem(response, std::vector<string_t>{"d:href"});
+
+                          if ( !etag || !caldata || !caluri ) {
+                              continue;
+                          }
+
+                          cal.uri.assign(caluri);
+                          cal.etag.assign(etag);
+                          cal.data.assign(caldata);
+                          cals.push_back(cal);
+                          response = response->NextSiblingElement("d:response");
+                      }
+                      return outbuf.close();
+                  })
                     // Wait for the entire response body to be written into the file.
             .wait();
 }
@@ -218,7 +273,6 @@ void getall(std::vector<Calendra>& cals){
     */
 
     auto outbuf = container_buffer<std::vector<uint8_t>>(std::ios_base::out);
-    std::unique_ptr<uint8_t[]> respBuf = nullptr;
 
     client.request(req)
             .then([&outbuf](http_response response) -> pplx::task<size_t>
@@ -226,34 +280,38 @@ void getall(std::vector<Calendra>& cals){
                       printf("Response status code %u returned.\n", response.status_code());
                       return response.body().read_to_end(outbuf);
                   })
-            .then([&outbuf,&respBuf,&cals](size_t respLen)
+            .then([&outbuf,&cals](size_t respLen)
                   {
                       /*
                          size_t acquired_size = 0;
                          uint8_t* ptr;
                          bool acquired = cb.acquire(ptr, acquired_size);//may dont copy
                        */
-                      respBuf = std::make_unique<uint8_t[]>(respLen);
-                      long newpos = outbuf.seekpos(1, std::ios_base::in);//if canread is false ,seek will fail
-                      printf("resplen:%ld, cblen:%ld, newpos:%ld, canread:%d\n",
-                             respLen, outbuf.size(), newpos, outbuf.can_read());
+                      //long newpos = outbuf.seekpos(1, std::ios_base::in);//if canread is false ,seek will fail
+                      printf("resplen:%ld, cblen:%ld, canread:%d\n",
+                             respLen, outbuf.size(), outbuf.can_read());
 
                       auto& cbvec = outbuf.collection();
-                      printf("resplen:%ld, cap:%ld\n", cbvec.size(), cbvec.capacity());
-                      string_t bodyStr{(char *)&cbvec[0], cbvec.size()};
-                      printf("resp:\n%s\n", bodyStr.c_str());
-
                       //parse xml
                       XMLDocument doc;
                       doc.Parse((char *)&cbvec[0], cbvec.size());
-                      const char* etag = getXmlElem(doc, std::vector<string_t>{"d:multistatus", "d:response", "d:propstat", "d:prop", "d:getetag"});
-                      printf( "displayname is: %s\n", etag );
-                      Calendra cal;
-                      cal.etag.assign(etag);
-                      const char *caldata = getXmlElem(doc, std::vector<string_t>{"d:multistatus", "d:response", "d:propstat", "d:prop", "cal:calendar-data"});
-                      printf( "getctag is: %s\n", caldata );
-                      cal.data.assign(caldata);
+                      const XMLElement* response = getXmlResp(doc);
+                      while(response) {
+                          Calendra cal{};
+                          const char *etag = getXmlElem(response, std::vector<string_t>{"d:propstat", "d:prop", "d:getetag"});
+                          const char *caldata = getXmlElem(response, std::vector<string_t>{"d:propstat", "d:prop", "cal:calendar-data"});
+                          const char *uri = getXmlElem(response, std::vector<string_t>{"d:href"});
 
+                          if ( !etag || !caldata || !uri ) {
+                              continue;
+                          }
+
+                          cal.uri.assign(uri);
+                          cal.etag.assign(etag);
+                          cal.data.assign(caldata);
+                          cals.push_back(cal);
+                          response = response->NextSiblingElement("d:response");
+                      }
                       return outbuf.close();
                   })
                     // Wait for the entire response body to be written into the file.
@@ -291,7 +349,6 @@ void propfind(string_t& displayName, string_t& syncToken){
     */
 
     auto outbuf = container_buffer<std::vector<uint8_t>>(std::ios_base::out);
-    std::unique_ptr<uint8_t[]> respBuf = nullptr;
 
     client.request(req)
             .then([&outbuf](http_response response) -> pplx::task<size_t>
@@ -299,17 +356,15 @@ void propfind(string_t& displayName, string_t& syncToken){
                       printf("Response status code %u returned.\n", response.status_code());
                       return response.body().read_to_end(outbuf);
                   })
-            .then([&outbuf,&respBuf,&displayName,&syncToken](size_t respLen)
+            .then([&outbuf,&displayName,&syncToken](size_t respLen)
                   {
                    /*
                       size_t acquired_size = 0;
                       uint8_t* ptr;
                       bool acquired = cb.acquire(ptr, acquired_size);//may dont copy
                     */
-                      respBuf = std::make_unique<uint8_t[]>(respLen);
-                      long newpos = outbuf.seekpos(1, std::ios_base::in);//if canread is false ,seek will fail
-                      printf("resplen:%ld, cblen:%ld, newpos:%ld, canread:%d\n",
-                             respLen, outbuf.size(), newpos, outbuf.can_read());
+                      printf("resplen:%ld, cblen:%ld, canread:%d\n",
+                             respLen, outbuf.size(), outbuf.can_read());
 
                       auto& cbvec = outbuf.collection();
                       printf("resplen:%ld, cap:%ld\n", cbvec.size(), cbvec.capacity());
@@ -319,36 +374,21 @@ void propfind(string_t& displayName, string_t& syncToken){
                       //parse xml
                       XMLDocument doc;
                       doc.Parse((char *)&cbvec[0], cbvec.size());
-                      const char* text = getXmlElem(doc, std::vector<string_t>{"d:multistatus", "d:response", "d:propstat", "d:prop", "d:displayname"});
-                      printf( "displayname is: %s\n", text );
-                      displayName.assign(text);
-                      text = getXmlElem(doc, std::vector<string_t>{"d:multistatus", "d:response", "d:propstat", "d:prop", "cs:getctag"});
-                      printf( "getctag is: %s\n", text );
-                      syncToken.assign(text);
-                      text = getXmlElem(doc, std::vector<string_t>{"d:multistatus", "d:response", "d:propstat", "d:prop", "d:sync-token"});
-                      printf( "sync-token is: %s\n", text );
-
+                      const XMLElement* response = getXmlResp(doc);
+                      if (response) {
+                          const char *text = getXmlElem(response, std::vector<string_t>{"d:propstat", "d:prop", "d:displayname"});
+                          if (text) {
+                              displayName.assign(text);
+                          }
+                          text = getXmlElem(response, std::vector<string_t>{"d:propstat", "d:prop", "d:sync-token"});
+                          if (text) {
+                              syncToken.assign(text);
+                          }
+                      }
                       return outbuf.close();
                   })
                     // Wait for the entire response body to be written into the file.
             .wait();
-}
-
-const char* getXmlElem(const XMLDocument& doc, std::vector<string_t>&& path){
-    const char *text = nullptr;
-
-    size_t num = path.size();
-    if (num>0){
-        const XMLElement* element = doc.FirstChildElement(path[0].c_str());
-        for (auto i=1; i<path.size() && element; ++i){
-            element = element->FirstChildElement(path[i].c_str());
-        }
-
-        if ( element )
-            text = element->GetText();
-    }
-
-    return text;
 }
 
 #ifdef _WIN32
@@ -357,31 +397,44 @@ int wmain(int argc, wchar_t *args[])
 int main(int argc, char *args[])
 #endif
 {
-    if(argc != 4)
+    if(argc < 2)
     {
-        printf("Usage: BingRequest.exe type search_term output_file\n");
+        printf("Usage: BingRequest.exe type [filename]\n");
         return -1;
     }
 
     const int type = atoi(args[1]);
-    const string_t inputFileName = args[2];
-    const string_t outputFileName = args[3];
 
     switch (type) {
-        case 1:
-            create(inputFileName,outputFileName);
+        case 1:{
+            Calendra cal;
+            cal.uri = "/cal.php/calendars/zj/default/my2.ics";
+            cal.data = loadFile(args[2]);
+            string_t etag;
+            create(cal, etag);
+            printf("etag:%s\n", etag.c_str());
+            }
             break;
-        case 2:
-            get(inputFileName, outputFileName);
+        case 2: {
+                std::vector<Calendra> cals;
+                gets(std::vector<string_t>{"/cal.php/calendars/zj/default/my.ics","/cal.php/calendars/zj/default/my1.ics"}, cals);
+                for(Calendra& cal:cals){
+                    printf("uri:%s\netag:%s\ndata:%s\n\n", cal.uri.c_str(),cal.etag.c_str(),cal.data.c_str());
+                }
+            }
             break;
         case 3: {
                 std::vector<Calendra> cals;
                 getall(cals);
+                for(Calendra& cal:cals){
+                    printf("uri:%s\netag:%s\ndata:%s\n\n", cal.uri.c_str(),cal.etag.c_str(),cal.data.c_str());
+                }
             }
             break;
         case 4: {
                 string_t displayName,syncToken;
                 propfind(displayName, syncToken);
+                printf("displayname:%s, synctoken:%s\n", displayName.c_str(), syncToken.c_str());
             }
             break;
         default:

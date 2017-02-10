@@ -14,6 +14,7 @@ namespace caldav
 struct Calendra{
     std::string data;
     std::string etag;
+    std::string uri;
 };
 }
 
