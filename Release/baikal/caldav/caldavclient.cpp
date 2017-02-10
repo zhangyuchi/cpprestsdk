@@ -53,7 +53,6 @@ string_t loadFile(const char* fn){
     std::unique_ptr<uint8_t[]> bodyBuf = nullptr;
     string_t fcontent;
 
-    auto inBuffer = std::make_shared<streambuf<uint8_t>>();
     file_buffer<uint8_t>::open(fn, std::ios::in)
             .then([&](streambuf<uint8_t> inFile) -> pplx::task<size_t>
                   {
@@ -66,8 +65,6 @@ string_t loadFile(const char* fn){
                       return;
                   })
             .wait();
-
-    printf("file content is %s\n", fcontent.c_str());
 
     return fcontent;
 }
@@ -95,6 +92,49 @@ web::http::client::http_client_config client_config_for_proxy()
     }
 
     return client_config;
+}
+
+int update(const Calendra& cal, string_t& etag){
+    int ret=0;
+    // Create an HTTP request.
+    // Encode the URI query since it could contain special characters like spaces.
+    //http_client_config config;
+    //credentials cred("username", "Password");
+    //config.set_credentials(cred);
+    http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+
+    http_request req(methods::PUT);
+    //autharg2:= base64("user:pass")
+    req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+    req.headers().add("If-Match", cal.etag);
+    auto uri = uri_builder().append_path(cal.uri);
+    req.set_request_uri(uri.to_uri());
+    req.set_body(cal.data, utf8string("text/calendar; charset=utf-8"));
+
+    auto outbuf = container_buffer<std::vector<uint8_t>>(std::ios_base::out);
+
+    client.request(req)
+            .then([&outbuf, &etag, &ret](http_response response) -> pplx::task<size_t>
+                  {
+                      printf("Response status code %u returned.\n", response.status_code());
+                      if ( response.status_code() == 201 || response.status_code() == 204 ){
+                          etag = response.headers()["ETag"];
+                      }else{
+                          ret = response.status_code();
+                      }
+
+                      return response.body().read_to_end(outbuf);
+                  })
+                    // Close the file buffer.
+            .then([&outbuf](size_t)
+                  {
+                      return outbuf.close();
+                  })
+
+                    // Wait for the entire response body to be written into the file.
+            .wait();
+
+    return ret;
 }
 
 int create(const Calendra& cal, string_t& etag){
@@ -144,8 +184,8 @@ int create(const Calendra& cal, string_t& etag){
     return ret;
 }
 
-void gets(const std::vector<string_t>& uris, std::vector<Calendra>& cals){
-
+int gets(const std::vector<string_t>& uris, std::vector<Calendra>& cals){
+    int ret=0;
     string_t origxml = "<c:calendar-multiget xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\">\n"
             "    <d:prop>\n"
             "        <d:getetag />\n"
@@ -237,10 +277,11 @@ void gets(const std::vector<string_t>& uris, std::vector<Calendra>& cals){
                   })
                     // Wait for the entire response body to be written into the file.
             .wait();
+    return ret;
 }
 
-void getall(std::vector<Calendra>& cals){
-
+int getall(std::vector<Calendra>& cals){
+    int ret=0;
     string_t bodyBuf = "<c:calendar-query xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\">\n"
             "    <d:prop>\n"
             "        <d:getetag />\n"
@@ -316,9 +357,12 @@ void getall(std::vector<Calendra>& cals){
                   })
                     // Wait for the entire response body to be written into the file.
             .wait();
+
+    return ret;
 }
 
-void propfind(string_t& displayName, string_t& syncToken){
+int propfind(string_t& displayName, string_t& syncToken){
+    int ret=0;
 
     string_t bodyBuf = "<d:propfind xmlns:d=\"DAV:\" xmlns:cs=\"http://calendarserver.org/ns/\">\n"
             "  <d:prop>\n"
@@ -389,8 +433,108 @@ void propfind(string_t& displayName, string_t& syncToken){
                   })
                     // Wait for the entire response body to be written into the file.
             .wait();
+
+    return ret;
 }
 
+int sync(const string_t& syncToken, std::vector<Calendra>& cals, string_t& newSyncToken){
+    int ret = 0;
+
+    if (syncToken.empty()){ return -1; }
+
+    string_t origxml = "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n"
+            "<d:sync-collection xmlns:d=\"DAV:\">\n"
+            "  <d:sync-level>1</d:sync-level>\n"
+            "  <d:prop>\n"
+            "    <d:getetag/>\n"
+            "  </d:prop>\n"
+            "</d:sync-collection>";
+
+    //parse xml
+    XMLDocument reqxml;
+    reqxml.Parse(origxml.data(), origxml.size());
+    XMLElement* root = reqxml.FirstChildElement();
+    if (root){
+        XMLElement* pHref = reqxml.NewElement("d:sync-token");
+        pHref->SetText(syncToken.c_str());
+        root->InsertFirstChild(pHref);
+    }
+
+    XMLPrinter printer;
+    reqxml.Print( &printer );
+    //printf("reqxml:%s\n", printer.CStr());
+
+    // Create an HTTP request.
+    // Encode the URI query since it could contain special characters like spaces.
+    //http_client_config config;
+    //credentials cred("username", "Password");
+    //config.set_credentials(cred);
+    http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+
+    http_request req(methods::REPORT);
+    //autharg2:= base64("user:pass")
+    req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+    req.headers().add("DEPTH", "1");
+
+    auto uri = uri_builder().append_path("/cal.php/calendars/zj/default/");
+    req.set_request_uri(uri.to_uri());
+    req.set_body(printer.CStr(), utf8string("text/xml; charset=utf-8"));
+
+    /*
+    http_client client(U("http://127.0.0.1:801/"), client_config_for_proxy());
+    return client.request(methods::GET, uri_builder(U("/cal.php/calendars/zj/default/")).append_query(U("q"), searchTerm).to_string());
+    */
+
+    auto outbuf = container_buffer<std::vector<uint8_t>>(std::ios_base::out);
+
+    client.request(req)
+            .then([&outbuf](http_response response) -> pplx::task<size_t>
+                  {
+                      printf("Response status code %u returned.\n", response.status_code());
+                      return response.body().read_to_end(outbuf);
+                  })
+            .then([&outbuf,&cals,&newSyncToken](size_t respLen)
+                  {
+                      /*
+                         size_t acquired_size = 0;
+                         uint8_t* ptr;
+                         bool acquired = cb.acquire(ptr, acquired_size);//may dont copy
+                       */
+                      printf("resplen:%ld, cblen:%ld, canread:%d\n",
+                             respLen, outbuf.size(), outbuf.can_read());
+
+                      auto& cbvec = outbuf.collection();
+                      //parse xml
+                      XMLDocument doc;
+                      doc.Parse((char *)&cbvec[0], cbvec.size());
+                      const XMLElement* response = getXmlResp(doc);
+
+                      const XMLElement* sync_token_elem = response->NextSiblingElement("d:sync-token");
+                      if (sync_token_elem){
+                          newSyncToken = sync_token_elem->GetText();
+                      }
+
+                      while(response) {
+                          Calendra cal{};
+                          const char *etag = getXmlElem(response, std::vector<string_t>{"d:propstat", "d:prop", "d:getetag"});
+                          const char *caluri = getXmlElem(response, std::vector<string_t>{"d:href"});
+
+                          if ( !etag || !caluri ) {
+                              continue;
+                          }
+
+                          cal.uri.assign(caluri);
+                          cal.etag.assign(etag);
+                          cals.push_back(cal);
+                          response = response->NextSiblingElement("d:response");
+                      }
+                      return outbuf.close();
+                  })
+                    // Wait for the entire response body to be written into the file.
+            .wait();
+
+    return ret;
+}
 #ifdef _WIN32
 int wmain(int argc, wchar_t *args[])
 #else
@@ -406,7 +550,7 @@ int main(int argc, char *args[])
     const int type = atoi(args[1]);
 
     switch (type) {
-        case 1:{
+        case 1:{ //create
             Calendra cal;
             cal.uri = "/cal.php/calendars/zj/default/my2.ics";
             cal.data = loadFile(args[2]);
@@ -415,7 +559,7 @@ int main(int argc, char *args[])
             printf("etag:%s\n", etag.c_str());
             }
             break;
-        case 2: {
+        case 2: { //get指定的ical
                 std::vector<Calendra> cals;
                 gets(std::vector<string_t>{"/cal.php/calendars/zj/default/my.ics","/cal.php/calendars/zj/default/my1.ics"}, cals);
                 for(Calendra& cal:cals){
@@ -423,7 +567,7 @@ int main(int argc, char *args[])
                 }
             }
             break;
-        case 3: {
+        case 3: {//取所有的ical
                 std::vector<Calendra> cals;
                 getall(cals);
                 for(Calendra& cal:cals){
@@ -431,11 +575,31 @@ int main(int argc, char *args[])
                 }
             }
             break;
-        case 4: {
+        case 4: {//取属性信息
                 string_t displayName,syncToken;
                 propfind(displayName, syncToken);
                 printf("displayname:%s, synctoken:%s\n", displayName.c_str(), syncToken.c_str());
             }
+            break;
+        case 5: { //update
+            Calendra cal;
+            cal.uri = "/cal.php/calendars/zj/default/my2.ics";
+            cal.data = loadFile(args[2]);
+            cal.etag = "\"ac2004d91e7d26f5f3b1777489523780\"";
+            string_t etag;
+            update(cal, etag);
+            printf("etag:%s\n", etag.c_str());
+        }
+            break;
+        case 6: { //sync
+            std::vector<Calendra> cals;
+            string_t newSyncToken;
+            sync("http://sabre.io/ns/sync/1", cals, newSyncToken);
+            printf("new sync-token:%s\n", newSyncToken.c_str());
+            for(Calendra& cal:cals){
+                printf("uri:%s\netag:%s\n\n", cal.uri.c_str(),cal.etag.c_str());
+            }
+        }
             break;
         default:
             printf("invalid type: %d\n", type);
