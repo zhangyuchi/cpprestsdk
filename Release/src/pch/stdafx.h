@@ -110,6 +110,9 @@
 // xml
 #include "cpprest/tinyxml2.h"
 
+//webdav
+#include "cpprest/webdav.h"
+
 // uri
 #include "cpprest/base_uri.h"
 #include "cpprest/details/uri_parser.h"

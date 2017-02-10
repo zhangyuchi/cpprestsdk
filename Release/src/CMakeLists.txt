@@ -35,7 +35,7 @@ set(SOURCES
   utilities/asyncrt_utils.cpp
   utilities/base64.cpp
   utilities/web_utilities.cpp
-        ../include/cpprest/webdav.h)
+  webdav/webdav.cpp)
 
 ## Sub-component sources
 # Websockets component

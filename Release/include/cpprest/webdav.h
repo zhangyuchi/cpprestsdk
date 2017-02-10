@@ -17,8 +17,6 @@ struct Calendra{
     std::string uri;
 };
 
-using namespace tinyxml2;
-
 class CalDav {
 private:
     std::string address_;//host:port

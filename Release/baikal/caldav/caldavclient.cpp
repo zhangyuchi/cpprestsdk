@@ -22,7 +22,7 @@ using namespace concurrency::streams;
 using namespace web::tinyxml2;
 using namespace web::caldav;
 
-const char* getXmlElem(const XMLElement* element, std::vector<string_t>&& path){
+static const char* getXmlElem(const XMLElement* element, std::vector<string_t>&& path){
     const char *text = nullptr;
 
     size_t num = path.size();
@@ -38,7 +38,7 @@ const char* getXmlElem(const XMLElement* element, std::vector<string_t>&& path){
     return text;
 }
 
-const XMLElement* getXmlResp(const XMLDocument& doc){
+static const XMLElement* getXmlResp(const XMLDocument& doc){
 
     const XMLElement* elem = nullptr;
     elem = doc.FirstChildElement("d:multistatus");
@@ -49,7 +49,7 @@ const XMLElement* getXmlResp(const XMLDocument& doc){
     return elem;
 }
 
-string_t loadFile(const char* fn){
+static string_t loadFile(const char* fn){
     std::unique_ptr<uint8_t[]> bodyBuf = nullptr;
     string_t fcontent;
 
@@ -73,7 +73,7 @@ string_t loadFile(const char* fn){
    Example:
    Linux:   export http_proxy=http://192.1.8.1:8080
  */
-web::http::client::http_client_config client_config_for_proxy()
+static web::http::client::http_client_config client_config_for_proxy()
 {
     web::http::client::http_client_config client_config;
 #ifdef _WIN32
