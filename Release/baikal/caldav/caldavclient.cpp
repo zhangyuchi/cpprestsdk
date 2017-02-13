@@ -14,14 +14,16 @@
 #include <cpprest/filestream.h>
 #include <cpprest/tinyxml2.h>
 #include <cpprest/webdav.h>
+#include <stdlib.h>
 
 using namespace utility;
 using namespace web::http;
 using namespace web::http::client;
 using namespace concurrency::streams;
 using namespace web::tinyxml2;
-using namespace web::caldav;
+using namespace web::webdav;
 
+#if 0
 static const char* getXmlElem(const XMLElement* element, std::vector<string_t>&& path){
     const char *text = nullptr;
 
@@ -133,7 +135,6 @@ int update(const Calendra& cal, string_t& etag){
 
                     // Wait for the entire response body to be written into the file.
             .wait();
-
     return ret;
 }
 
@@ -535,6 +536,9 @@ int sync(const string_t& syncToken, std::vector<Calendra>& cals, string_t& newSy
 
     return ret;
 }
+
+#endif
+
 #ifdef _WIN32
 int wmain(int argc, wchar_t *args[])
 #else
@@ -548,6 +552,7 @@ int main(int argc, char *args[])
     }
 
     const int type = atoi(args[1]);
+    CalDav caldav("http", "127.0.0.1:801", "zj", "duzimei");
 
     switch (type) {
         case 1:{ //create
@@ -555,13 +560,13 @@ int main(int argc, char *args[])
             cal.uri = "/cal.php/calendars/zj/default/my2.ics";
             cal.data = loadFile(args[2]);
             string_t etag;
-            create(cal, etag);
+            caldav.Upload(cal, etag);
             printf("etag:%s\n", etag.c_str());
             }
             break;
         case 2: { //get指定的ical
                 std::vector<Calendra> cals;
-                gets(std::vector<string_t>{"/cal.php/calendars/zj/default/my.ics","/cal.php/calendars/zj/default/my1.ics"}, cals);
+                caldav.DownloadItems("/cal.php/calendars/zj/default/", std::vector<string_t>{"/cal.php/calendars/zj/default/my.ics","/cal.php/calendars/zj/default/my1.ics"}, cals);
                 for(Calendra& cal:cals){
                     printf("uri:%s\netag:%s\ndata:%s\n\n", cal.uri.c_str(),cal.etag.c_str(),cal.data.c_str());
                 }
@@ -569,7 +574,7 @@ int main(int argc, char *args[])
             break;
         case 3: {//取所有的ical
                 std::vector<Calendra> cals;
-                getall(cals);
+                caldav.DownloadAll("/cal.php/calendars/zj/default/", cals);
                 for(Calendra& cal:cals){
                     printf("uri:%s\netag:%s\ndata:%s\n\n", cal.uri.c_str(),cal.etag.c_str(),cal.data.c_str());
                 }
@@ -577,7 +582,7 @@ int main(int argc, char *args[])
             break;
         case 4: {//取属性信息
                 string_t displayName,syncToken;
-                propfind(displayName, syncToken);
+                caldav.Propfind("/cal.php/calendars/zj/default/", displayName, syncToken);
                 printf("displayname:%s, synctoken:%s\n", displayName.c_str(), syncToken.c_str());
             }
             break;
@@ -587,14 +592,14 @@ int main(int argc, char *args[])
             cal.data = loadFile(args[2]);
             cal.etag = "\"ac2004d91e7d26f5f3b1777489523780\"";
             string_t etag;
-            update(cal, etag);
+            caldav.Upload(cal, etag);
             printf("etag:%s\n", etag.c_str());
         }
             break;
         case 6: { //sync
             std::vector<Calendra> cals;
             string_t newSyncToken;
-            sync("http://sabre.io/ns/sync/1", cals, newSyncToken);
+            caldav.Sync("/cal.php/calendars/zj/default/","http://sabre.io/ns/sync/1", cals, newSyncToken);
             printf("new sync-token:%s\n", newSyncToken.c_str());
             for(Calendra& cal:cals){
                 printf("uri:%s\netag:%s\n\n", cal.uri.c_str(),cal.etag.c_str());
