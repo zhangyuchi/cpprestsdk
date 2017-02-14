@@ -213,8 +213,12 @@ int CalDav::gets(const std::string& url, const std::vector<std::string>& uris, s
     http_client client(U(scheme_+"://"+address_), client_config_for_proxy());
 
     http_request req(methods::REPORT);
-    //autharg2:= base64("user:pass")
-    req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+
+    std::string origstr(user_+":"+password_);
+    std::vector<unsigned char> orig(origstr.begin(), origstr.end());
+    std::string base64str = utility::conversions::to_base64(orig);
+    //printf("base64 auth: %s\n", base64str.c_str());
+    req.headers().add("Authorization", "Basic "+ base64str);
     req.headers().add("DEPTH", "1");
 
     auto uri = uri_builder().append_path(url);//"/cal.php/calendars/zj/default/");
@@ -253,7 +257,7 @@ int CalDav::gets(const std::string& url, const std::vector<std::string>& uris, s
                       //parse xml
                       XMLDocument doc;
                       auto pret = doc.Parse((char *)&cbvec[0], cbvec.size());
-                      if ( pret != XML_SUCCESS ) { ret = 511; }
+                      if ( pret != XML_SUCCESS ) { ret = 511; return outbuf.close();}
                       const XMLElement *response = getXmlResp(doc);
                       while (response) {
                           Calendra cal{};
@@ -301,8 +305,12 @@ int CalDav::getall(const std::string& url, std::vector<Calendra>& cals){
     http_client client(U(scheme_+"://"+address_), client_config_for_proxy());
 
     http_request req(methods::REPORT);
-    //autharg2:= base64("user:pass")
-    req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+
+    std::string origstr(user_+":"+password_);
+    std::vector<unsigned char> orig(origstr.begin(), origstr.end());
+    std::string base64str = utility::conversions::to_base64(orig);
+    //printf("base64 auth: %s\n", base64str.c_str());
+    req.headers().add("Authorization", "Basic "+ base64str);
     req.headers().add("DEPTH", "1");
 
     auto uri = uri_builder().append_path(url);
@@ -317,7 +325,7 @@ int CalDav::getall(const std::string& url, std::vector<Calendra>& cals){
     auto outbuf = container_buffer<std::vector<uint8_t>>(std::ios_base::out);
 
     client.request(req)
-            .then([&outbuf](http_response response) -> pplx::task<size_t>
+            .then([&outbuf,&ret](http_response response) -> pplx::task<size_t>
                   {
                       printf("Response status code %u returned.\n", response.status_code());
                       if ( response.status_code() > 299 ){
@@ -325,7 +333,7 @@ int CalDav::getall(const std::string& url, std::vector<Calendra>& cals){
                       }
                       return response.body().read_to_end(outbuf);
                   })
-            .then([&outbuf,&cals](size_t respLen)
+            .then([&outbuf,&cals,&ret](size_t respLen)
                   {
                       if ( ret !=0 ){ return outbuf.close(); }
 
@@ -341,19 +349,20 @@ int CalDav::getall(const std::string& url, std::vector<Calendra>& cals){
                       auto& cbvec = outbuf.collection();
                       //parse xml
                       XMLDocument doc;
-                      doc.Parse((char *)&cbvec[0], cbvec.size());
+                      auto pret = doc.Parse((char *)&cbvec[0], cbvec.size());
+                      if ( pret != XML_SUCCESS ) { ret = 511; return outbuf.close();}
                       const XMLElement* response = getXmlResp(doc);
                       while(response) {
                           Calendra cal{};
                           const char *etag = getXmlElem(response, std::vector<string_t>{"d:propstat", "d:prop", "d:getetag"});
                           const char *caldata = getXmlElem(response, std::vector<string_t>{"d:propstat", "d:prop", "cal:calendar-data"});
-                          const char *uri = getXmlElem(response, std::vector<string_t>{"d:href"});
+                          const char *caluri = getXmlElem(response, std::vector<string_t>{"d:href"});
 
-                          if ( !etag || !caldata || !uri ) {
+                          if ( !etag || !caldata || !caluri ) {
                               continue;
                           }
 
-                          cal.uri.assign(uri);
+                          cal.uri.assign(caluri);
                           cal.etag.assign(etag);
                           cal.data.assign(caldata);
                           cals.push_back(cal);
@@ -385,8 +394,12 @@ int CalDav::propfind(const std::string& url, std::string& displayName, std::stri
     http_client client(U(scheme_+"://"+address_), client_config_for_proxy());
 
     http_request req(methods::PROPFIND);
-    //autharg2:= base64("user:pass")
-    req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+
+    std::string origstr(user_+":"+password_);
+    std::vector<unsigned char> orig(origstr.begin(), origstr.end());
+    std::string base64str = utility::conversions::to_base64(orig);
+    //printf("base64 auth: %s\n", base64str.c_str());
+    req.headers().add("Authorization", "Basic "+ base64str);
     req.headers().add("DEPTH", "0");
 
     auto uri = uri_builder().append_path(url);
@@ -401,7 +414,7 @@ int CalDav::propfind(const std::string& url, std::string& displayName, std::stri
     auto outbuf = container_buffer<std::vector<uint8_t>>(std::ios_base::out);
 
     client.request(req)
-            .then([&outbuf](http_response response) -> pplx::task<size_t>
+            .then([&outbuf,&ret](http_response response) -> pplx::task<size_t>
                   {
                       printf("Response status code %u returned.\n", response.status_code());
                       if ( response.status_code() > 299 ){
@@ -409,7 +422,7 @@ int CalDav::propfind(const std::string& url, std::string& displayName, std::stri
                       }
                       return response.body().read_to_end(outbuf);
                   })
-            .then([&outbuf,&displayName,&syncToken](size_t respLen)
+            .then([&outbuf,&displayName,&syncToken,&ret](size_t respLen)
                   {
                       if ( ret !=0 ){ return outbuf.close(); }
                       /*
@@ -428,19 +441,18 @@ int CalDav::propfind(const std::string& url, std::string& displayName, std::stri
                       //parse xml
                       XMLDocument doc;
                       auto pret = doc.Parse((char *)&cbvec[0], cbvec.size());
-                      if ( pret == XML_SUCCESS ) {
-                          const XMLElement *response = getXmlResp(doc);
-                          if (response) {
-                              const char *text = getXmlElem(response, std::vector<string_t>{"d:propstat", "d:prop",
-                                                                                            "d:displayname"});
-                              if (text) {
-                                  displayName.assign(text);
-                              }
-                              text = getXmlElem(response,
-                                                std::vector<string_t>{"d:propstat", "d:prop", "d:sync-token"});
-                              if (text) {
-                                  syncToken.assign(text);
-                              }
+                      if ( pret != XML_SUCCESS ) { ret = 511; return outbuf.close();}
+                      const XMLElement *response = getXmlResp(doc);
+                      if (response) {
+                          const char *text = getXmlElem(response, std::vector<string_t>{"d:propstat", "d:prop",
+                                                                                        "d:displayname"});
+                          if (text) {
+                              displayName.assign(text);
+                          }
+                          text = getXmlElem(response,
+                                            std::vector<string_t>{"d:propstat", "d:prop", "d:sync-token"});
+                          if (text) {
+                              syncToken.assign(text);
                           }
                       }
                       return outbuf.close();
@@ -486,8 +498,12 @@ int CalDav::sync(const std::string& url, const std::string& syncToken, std::vect
     http_client client(U(scheme_+"://"+address_), client_config_for_proxy());
 
     http_request req(methods::REPORT);
-    //autharg2:= base64("user:pass")
-    req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+
+    std::string origstr(user_+":"+password_);
+    std::vector<unsigned char> orig(origstr.begin(), origstr.end());
+    std::string base64str = utility::conversions::to_base64(orig);
+    //printf("base64 auth: %s\n", base64str.c_str());
+    req.headers().add("Authorization", "Basic "+ base64str);
     req.headers().add("DEPTH", "1");
 
     auto uri = uri_builder().append_path(url);
@@ -502,7 +518,7 @@ int CalDav::sync(const std::string& url, const std::string& syncToken, std::vect
     auto outbuf = container_buffer<std::vector<uint8_t>>(std::ios_base::out);
 
     client.request(req)
-            .then([&outbuf](http_response response) -> pplx::task<size_t>
+            .then([&outbuf,&ret](http_response response) -> pplx::task<size_t>
                   {
                       printf("Response status code %u returned.\n", response.status_code());
                       if ( response.status_code() > 299 ){
@@ -510,7 +526,7 @@ int CalDav::sync(const std::string& url, const std::string& syncToken, std::vect
                       }
                       return response.body().read_to_end(outbuf);
                   })
-            .then([&outbuf,&cals,&newSyncToken](size_t respLen)
+            .then([&outbuf,&cals,&newSyncToken,&ret](size_t respLen)
                   {
                       if ( ret !=0 ){ return outbuf.close(); }
                       /*
@@ -524,7 +540,8 @@ int CalDav::sync(const std::string& url, const std::string& syncToken, std::vect
                       auto& cbvec = outbuf.collection();
                       //parse xml
                       XMLDocument doc;
-                      doc.Parse((char *)&cbvec[0], cbvec.size());
+                      auto pret = doc.Parse((char *)&cbvec[0], cbvec.size());
+                      if ( pret != XML_SUCCESS ) { ret = 511; return outbuf.close();}
                       const XMLElement* response = getXmlResp(doc);
 
                       const XMLElement* sync_token_elem = response->NextSiblingElement("d:sync-token");

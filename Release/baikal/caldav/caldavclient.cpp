@@ -590,7 +590,7 @@ int main(int argc, char *args[])
             Calendra cal;
             cal.uri = "/cal.php/calendars/zj/default/my2.ics";
             cal.data = loadFile(args[2]);
-            cal.etag = "\"ac2004d91e7d26f5f3b1777489523780\"";
+            cal.etag = "\"0e294ea9e5485f7dbd539bf506f6707e\"";
             string_t etag;
             caldav.Upload(cal, etag);
             printf("etag:%s\n", etag.c_str());
