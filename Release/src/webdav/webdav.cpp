@@ -86,6 +86,21 @@ static web::http::client::http_client_config client_config_for_proxy() {
     return client_config;
 }
 
+std::string CalDav::getAuthToken(){
+    switch (method_){
+        case BasicAuth :
+        {
+            std::string origstr(user_+":"+password_);
+            std::vector<unsigned char> orig(origstr.begin(), origstr.end());
+            std::string base64str = utility::conversions::to_base64(orig);
+            //printf("base64 auth: %s\n", base64str.c_str());
+            return "Basic "+ base64str;
+        }
+        default:
+            return "";
+    }
+}
+
 int CalDav::update(const Calendra& cal, std::string& etag){
     int ret=0;
     // Create an HTTP request.
@@ -96,8 +111,11 @@ int CalDav::update(const Calendra& cal, std::string& etag){
     http_client client(U(scheme_+"://"+address_), client_config_for_proxy());
 
     http_request req(methods::PUT);
-    //autharg2:= base64("user:pass")
-    req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+
+    std::string authheadstr = getAuthToken();
+    if ( !authheadstr.empty() ) {
+        req.headers().add("Authorization", authheadstr);
+    }
     req.headers().add("If-Match", cal.etag);
     auto uri = uri_builder().append_path(cal.uri);
     req.set_request_uri(uri.to_uri());
@@ -139,8 +157,11 @@ int CalDav::create(const Calendra& cal, std::string& etag){
     http_client client(U(scheme_+"://"+address_), client_config_for_proxy());
 
     http_request req(methods::PUT);
-    //autharg2:= base64("user:pass")
-    req.headers().add("Authorization", "Basic emo6ZHV6aW1laQ==");
+
+    std::string authheadstr = getAuthToken();
+    if ( !authheadstr.empty() ) {
+        req.headers().add("Authorization", authheadstr);
+    }
     auto uri = uri_builder().append_path(cal.uri);
     req.set_request_uri(uri.to_uri());
     req.set_body(cal.data, utf8string("text/calendar; charset=utf-8"));
@@ -214,11 +235,10 @@ int CalDav::gets(const std::string& url, const std::vector<std::string>& uris, s
 
     http_request req(methods::REPORT);
 
-    std::string origstr(user_+":"+password_);
-    std::vector<unsigned char> orig(origstr.begin(), origstr.end());
-    std::string base64str = utility::conversions::to_base64(orig);
-    //printf("base64 auth: %s\n", base64str.c_str());
-    req.headers().add("Authorization", "Basic "+ base64str);
+    std::string authheadstr = getAuthToken();
+    if ( !authheadstr.empty() ) {
+        req.headers().add("Authorization", authheadstr);
+    }
     req.headers().add("DEPTH", "1");
 
     auto uri = uri_builder().append_path(url);//"/cal.php/calendars/zj/default/");
@@ -306,11 +326,10 @@ int CalDav::getall(const std::string& url, std::vector<Calendra>& cals){
 
     http_request req(methods::REPORT);
 
-    std::string origstr(user_+":"+password_);
-    std::vector<unsigned char> orig(origstr.begin(), origstr.end());
-    std::string base64str = utility::conversions::to_base64(orig);
-    //printf("base64 auth: %s\n", base64str.c_str());
-    req.headers().add("Authorization", "Basic "+ base64str);
+    std::string authheadstr = getAuthToken();
+    if ( !authheadstr.empty() ) {
+        req.headers().add("Authorization", authheadstr);
+    }
     req.headers().add("DEPTH", "1");
 
     auto uri = uri_builder().append_path(url);
@@ -395,11 +414,10 @@ int CalDav::propfind(const std::string& url, std::string& displayName, std::stri
 
     http_request req(methods::PROPFIND);
 
-    std::string origstr(user_+":"+password_);
-    std::vector<unsigned char> orig(origstr.begin(), origstr.end());
-    std::string base64str = utility::conversions::to_base64(orig);
-    //printf("base64 auth: %s\n", base64str.c_str());
-    req.headers().add("Authorization", "Basic "+ base64str);
+    std::string authheadstr = getAuthToken();
+    if ( !authheadstr.empty() ) {
+        req.headers().add("Authorization", authheadstr);
+    }
     req.headers().add("DEPTH", "0");
 
     auto uri = uri_builder().append_path(url);
@@ -499,11 +517,10 @@ int CalDav::sync(const std::string& url, const std::string& syncToken, std::vect
 
     http_request req(methods::REPORT);
 
-    std::string origstr(user_+":"+password_);
-    std::vector<unsigned char> orig(origstr.begin(), origstr.end());
-    std::string base64str = utility::conversions::to_base64(orig);
-    //printf("base64 auth: %s\n", base64str.c_str());
-    req.headers().add("Authorization", "Basic "+ base64str);
+    std::string authheadstr = getAuthToken();
+    if ( !authheadstr.empty() ) {
+        req.headers().add("Authorization", authheadstr);
+    }
     req.headers().add("DEPTH", "1");
 
     auto uri = uri_builder().append_path(url);
